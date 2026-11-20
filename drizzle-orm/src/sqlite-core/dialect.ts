@@ -400,6 +400,16 @@ export class SQLiteDialect {
 							table[Table.Symbol.IsAlias] ? aliasedTableSQL(table) : table
 						}${onSql}`,
 					);
+				} else if (is(table, View)) {
+					const viewName = table[ViewBaseConfig].name;
+					const viewSchema = table[ViewBaseConfig].schema;
+					const origViewName = table[ViewBaseConfig].originalName;
+					const alias = viewName === origViewName ? undefined : joinMeta.alias;
+					joinsArray.push(
+						sql`${new StringChunk(joinMeta.joinType)} join ${
+							viewSchema ? sql`${sql.identifier(viewSchema)}.` : undefined
+						}${sql.identifier(origViewName)}${alias && sql` ${sql.identifier(alias)}`}${onSql}`,
+					);
 				} else {
 					joinsArray.push(
 						sql`${new StringChunk(joinMeta.joinType)} join ${table}${onSql}`,
