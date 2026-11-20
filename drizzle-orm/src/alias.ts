@@ -34,6 +34,17 @@ export class ColumnTableAliasProxyHandler<TColumn extends Column> implements Pro
 	}
 }
 
+/**
+ * Aliased selections of a view (`sql\`...\`.as('x')`) are referenced by name,
+ * so they have to be qualified with the name the view is referenced by
+ */
+function aliasSQLSelectionField(field: SQL.Aliased, origin: string): SQL.Aliased {
+	const result = field.clone();
+	result.isSelectionField = true;
+	result.origin = origin;
+	return result;
+}
+
 export class ViewSelectionAliasProxyHandler<TSelection extends Record<string, unknown>>
 	implements ProxyHandler<TSelection>
 {
@@ -55,11 +66,14 @@ export class ViewSelectionAliasProxyHandler<TSelection extends Record<string, un
 		let result = memo.get(value);
 		if (result !== undefined) return result;
 
-		if (isChunk(value, chunkKindOf(value), chunkKinds.column)) {
+		const kind = chunkKindOf(value);
+		if (isChunk(value, kind, chunkKinds.column)) {
 			result = new Proxy(
 				value,
 				this.columnHandler ??= new ColumnTableAliasProxyHandler(this.view, this.ignoreColumnAlias),
 			);
+		} else if (isChunk(value, kind, chunkKinds.aliased)) {
+			result = aliasSQLSelectionField(value, this.view[Table.Symbol.Name]);
 		} else if (isSQLWrapper(value)) {
 			result = value;
 		} else {
@@ -133,7 +147,8 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 		}
 
 		const value = target[prop as keyof typeof target];
-		if (isChunk(value, chunkKindOf(value), chunkKinds.column)) {
+		const valueKind = chunkKindOf(value);
+		if (isChunk(value, valueKind, chunkKinds.column)) {
 			const columns = (target as Table)[Table.Symbol.Columns];
 			if (typeof prop === 'string' && columns?.[prop] === value) {
 				return this.getProxiedColumns(columns, receiver)[prop];
@@ -142,6 +157,16 @@ export class TableAliasProxyHandler<T extends Table | View> implements ProxyHand
 			const memo = this.memo ??= new WeakMap();
 			let result = memo.get(value);
 			if (result === undefined) memo.set(value, result = this.aliasColumn(value, receiver));
+
+			return result;
+		}
+
+		// Aliased selections of a view are referenced by name, so they have to be
+		// qualified with the alias the view is joined under
+		if (isChunk(value, valueKind, chunkKinds.aliased) && isChunk(target, chunkKindOf(target), chunkKinds.view)) {
+			const memo = this.memo ??= new WeakMap();
+			let result = memo.get(value);
+			if (result === undefined) memo.set(value, result = aliasSQLSelectionField(value, this.alias));
 
 			return result;
 		}
